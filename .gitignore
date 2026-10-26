@@ -1,3 +1,9 @@
+# Datos descargados con descargar_datos.py
+datos/
+*.part
+prueba.csv
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
