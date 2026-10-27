@@ -240,7 +240,7 @@ def calcular_psd(x, fs, nperseg):
 
 def comparar_senales(
     senales,
-    fs=200,
+    fs,
     seg_tiempo=10,
     inicio=0,
     nperseg=4000,
@@ -378,13 +378,13 @@ def aplicar_filtros_eeg(df_eeg, fs, fc_baja=0.1, fc_alta=40.0, f_notch=50.0, q_n
 
    # 2. Diseño del pasabandas en forma SOS (más estable)
     sos_band = signal.butter(N=order, Wn=[fc_baja, fc_alta], btype='bandpass', fs=fs, output='sos')
-    # 3. Filtrado canal por canal con fase cero (filtfilt)
+    # 3. Filtrado canal por canal con fase cero (filtfilt, forward-backward)
 
     for canal in canales:
         x = df_filtrado[canal].values.astype(float)
         
         # Filtrado en cascada hacia adelante y hacia atrás
-        x_notch = signal.filtfilt(b_notch, a_notch, x)   # el notch es de 2º orden, no hay problema
+        x_notch = signal.filtfilt(b_notch, a_notch, x)   
         x_filt = signal.sosfiltfilt(sos_band, x_notch)
         
         df_filtrado[canal] = x_filt
