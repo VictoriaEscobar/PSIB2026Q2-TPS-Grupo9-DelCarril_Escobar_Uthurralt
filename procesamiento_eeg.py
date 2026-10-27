@@ -12,9 +12,33 @@ Flujo: cargar datos (ejecutar descargar_datos.py) -> (completar)
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from scipy import signal
 import matplotlib.pyplot as plt
 import os
+import random
+from scipy import signal
+from scipy.signal import welch
+
+
+# ======================  CONSTANTES  ===========================
+
+fs = 200               # Frecuencia de muestreo (Hz)
+min_muestras = 18000   # 90 s a 200 Hz: mínimo para considerar válido un registro (de 120 s)
+
+# =================== CARGA DE REGISTROS =========================
+
+def cargar_registro(ruta_archivo: str) -> pd.DataFrame:
+    """
+    Lee un CSV de EEG.
+
+    - La primera columna del CSV es el índice de muestra: pasa a ser el índice
+      del DataFrame y NO se cuenta como canal.
+    - Quedan solo los canales (T7, F8, Cz, P4).
+    - Todo se convierte a número, lo que no se pueda convertir queda como NaN.
+
+    """
+    df = pd.read_csv(ruta_archivo, index_col=0)
+    df.columns = df.columns.str.strip()
+    return df.apply(pd.to_numeric, errors="coerce")
 
 
 
@@ -33,7 +57,7 @@ def verificar_calidad_csv(ruta_archivo: str, min_muestras: int):
     Para 2 minutos de registro a 200 Hz, se recomienda min_muestras = 18000 (1 min 30 segundos de señal.)
     """
     try:
-        df = pd.read_csv(ruta_archivo) # Lectura del archivo.
+        df = cargar_registro(ruta_archivo) # Lectura del archivo.
 
         # Prueba 1: verifica que el archivo no esté vacío.
         if df.empty:
@@ -157,7 +181,7 @@ def screening_canales(ruta_Segmented_Data, archivos, factor_bajo=0.1, factor_alt
                 motivo.append("Desvío estándar muy alto")
             if frac_cero[i] > 0.5:  # Mas de la mitad de diferencias iguales a cero ==> señal congelada.
                 motivo.append("Señal congelada")
-                
+
             filas.append({
                 'Archivo': archivo, 'Canal': canal,
                 'Desvío estándar': desvio[i], 'Proporción de diferencias entre muestras iguales a cero': frac_cero[i],
@@ -166,3 +190,203 @@ def screening_canales(ruta_Segmented_Data, archivos, factor_bajo=0.1, factor_alt
                 'Motivo': ", ".join(motivo)
             })
     return pd.DataFrame(filas)
+
+
+# =================== FILTRADO ========================
+
+"""
+Exploración de registros EEG: serie temporal + PSD de Welch por canal.
+
+Cuatro funciones:
+    cargar_registro      -> lee un CSV y devuelve un DataFrame (solo canales)
+    calcular_psd         -> Welch 
+    comparar_senales     -> grafica N versiones ya cargadas
+    explorar_registros   -> elige archivos al azar, los carga y llama a comparar_senales
+
+Uso típico
+----------
+# 1) Solo crudos
+explorar_registros({"crudo": ruta_datos}, archivos, n_muestras=2, seed=0)
+
+# 2) Crudo vs filtrado (mismos nombres de archivo en ambas carpetas)
+explorar_registros(
+    {"crudo": ruta_datos, "filtrado": ruta_filtrados},
+    archivos, n_muestras=2, seed=0,
+)
+
+# 3) Filtrado en memoria, sin guardar nada
+df_crudo = cargar_registro(os.path.join(ruta_datos, archivo))
+df_filt = df_crudo.apply(lambda x: sosfiltfilt(sos, x))   # tu filtro
+comparar_senales({"crudo": df_crudo, "filtrado": df_filt}, titulo=archivo)
+"""
+
+COLORES = ["steelblue", "darkorange", "seagreen", "crimson"]
+
+# {frecuencia_Hz: (color, estilo)}
+REFS_DEFAULT = {
+    0.1: ("green", ":"),
+    40: ("orange", ":"),
+    50: ("red", "--"),
+}
+
+def calcular_psd(x, fs, nperseg):
+    """PSD de Welch ignorando NaN. Devuelve (None, None) si no hay datos."""
+    x = x[np.isfinite(x)]
+    if len(x) < 2:
+        return None, None
+    f, psd = welch(x, fs=fs, nperseg=min(nperseg, len(x)))
+    return f, np.maximum(psd, np.finfo(float).tiny)  # evita ceros en escala log
+
+
+def comparar_senales(
+    senales,
+    fs=200,
+    seg_tiempo=10,
+    inicio=0,
+    nperseg=4000,
+    fmax=60,
+    refs_hz=REFS_DEFAULT,
+    titulo="",
+):
+    """
+    Grafica, por canal, la serie temporal (columna izquierda) y la PSD (columna derecha)
+    de una o más versiones de un mismo registro.
+
+    Parámetros
+    ----------
+    senales : dict {nombre: DataFrame}
+        Ej.: {"crudo": df_crudo, "filtrado": df_filt}. Todos con los mismos canales.
+    fs : float
+        Frecuencia de muestreo (Hz).
+    seg_tiempo, inicio : float
+        Duración y comienzo (s) del fragmento temporal a mostrar.
+    nperseg : int
+        Muestras por segmento de Welch (se limita al largo del registro).
+    fmax : float
+        Frecuencia máxima de la PSD.
+    refs_hz : dict o None
+        Líneas verticales de referencia en la PSD.
+    """
+    canales = list(next(iter(senales.values())).columns)
+    for nombre, df in senales.items():
+        if list(df.columns) != canales:
+            raise ValueError(f"'{nombre}' tiene canales distintos: {list(df.columns)}")
+
+    i0 = int(inicio * fs)
+    i1 = i0 + int(seg_tiempo * fs)
+
+    fig, axes = plt.subplots(
+        len(canales), 2, figsize=(15, 2.8 * len(canales)), squeeze=False
+    )
+
+    for i, canal in enumerate(canales):
+        ax_t, ax_f = axes[i]
+
+        for (nombre, df), color in zip(senales.items(), COLORES):
+            x = df[canal].to_numpy(dtype=float)
+
+            seg = x[i0:i1]
+            t = (i0 + np.arange(len(seg))) / fs
+            ax_t.plot(t, seg, color=color, lw=0.8, alpha=0.85, label=nombre)
+
+            f, psd = calcular_psd(x, fs, nperseg)
+            if f is not None:
+                ax_f.semilogy(f, psd, color=color, lw=1, alpha=0.9, label=nombre)
+
+        ax_t.set_ylabel(canal)
+        ax_t.grid(True, ls="--", alpha=0.4)
+
+        for f_ref, (c, ls) in (refs_hz or {}).items():
+            ax_f.axvline(f_ref, color=c, ls=ls, alpha=0.8, label=f"{f_ref} Hz")
+        ax_f.set_xlim(0, min(fmax, fs / 2))
+        ax_f.set_ylabel("PSD (unidad²/Hz)")
+        ax_f.grid(True, which="both", ls="--", alpha=0.4)
+
+        if i == 0:
+            ax_t.set_title(f"Serie temporal ({seg_tiempo} s desde t={inicio} s)")
+            ax_f.set_title("PSD de Welch (registro completo)")
+            ax_t.legend(fontsize=8)
+            ax_f.legend(fontsize=8)
+        if i == len(canales) - 1:
+            ax_t.set_xlabel("Tiempo (s)")
+            ax_f.set_xlabel("Frecuencia (Hz)")
+
+    n_reg = len(next(iter(senales.values())))
+    fig.suptitle(f"{titulo} — {n_reg / fs:.1f} s, resolución Welch "
+                 f"{fs / min(nperseg, n_reg):.3f} Hz", fontsize=13)
+    plt.tight_layout()
+    plt.show()
+    plt.close(fig)
+
+
+def explorar_registros(
+    rutas,
+    lista_archivos,
+    n_muestras=2,
+    seed=None,
+    **kwargs,
+):
+    """
+    Elige archivos al azar, los carga de cada carpeta en `rutas` y los compara.
+
+    Parámetros
+    ----------
+    rutas : dict {nombre: carpeta}
+        Ej.: {"crudo": "datos/raw"} o {"crudo": "datos/raw", "filtrado": "datos/filt"}.
+        Los archivos deben llamarse igual en todas las carpetas.
+    lista_archivos : list
+        Nombres de archivo candidatos.
+    n_muestras : int
+        Cuántos archivos elegir al azar.
+    seed : int o None
+        Semilla para reproducir la selección.
+    **kwargs
+        Se pasan a `comparar_senales` (fs, seg_tiempo, inicio, nperseg, fmax, refs_hz).
+
+    Devuelve la lista de archivos seleccionados.
+    """
+    validos = [
+        a for a in lista_archivos
+        if a.lower().endswith(".csv")
+        and all(os.path.isfile(os.path.join(r, a)) for r in rutas.values())
+    ]
+    if not validos:
+        raise ValueError("No hay CSV presentes en todas las carpetas indicadas.")
+
+    sel = random.Random(seed).sample(validos, k=min(n_muestras, len(validos)))
+
+    for arch in sel:
+        senales = {n: cargar_registro(os.path.join(r, arch)) for n, r in rutas.items()}
+        comparar_senales(senales, titulo=arch, **kwargs)
+
+    return sel
+
+
+def aplicar_filtros_eeg(df_eeg, fs, fc_baja=0.1, fc_alta=40.0, f_notch=50.0, q_notch=30.0, order=4):
+    """
+    Aplica filtro Notch (50 Hz) y Pasabandas Butterworth (0.1 - 40 Hz).
+    Garantiza fase cero mediante filtfilt.
+    """
+    df_filtrado = df_eeg.copy()
+    
+    # Canales 
+    canales_objetivo = ['T7', 'F8', 'Cz', 'P4']
+    canales = [c for c in canales_objetivo if c in df_filtrado.columns]
+
+    # 1. Diseño del filtro Notch (50 Hz)
+    b_notch, a_notch = signal.iirnotch(w0=f_notch, Q=q_notch, fs=fs)
+
+   # 2. Diseño del pasabandas en forma SOS (más estable)
+    sos_band = signal.butter(N=order, Wn=[fc_baja, fc_alta], btype='bandpass', fs=fs, output='sos')
+    # 3. Filtrado canal por canal con fase cero (filtfilt)
+
+    for canal in canales:
+        x = df_filtrado[canal].values.astype(float)
+        
+        # Filtrado en cascada hacia adelante y hacia atrás
+        x_notch = signal.filtfilt(b_notch, a_notch, x)   # el notch es de 2º orden, no hay problema
+        x_filt = signal.sosfiltfilt(sos_band, x_notch)
+        
+        df_filtrado[canal] = x_filt
+
+    return df_filtrado
