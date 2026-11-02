@@ -1,0 +1,607 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Paquetes
+% ------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-noshorthands,es-tabla,es-nodecimaldot]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\captionsetup{font=small,labelfont=bf}
+\renewcommand{\arraystretch}{1.15}
+
+% ------------------------------------------------------------------
+% Marcador de figura: reemplazar el \fbox por
+%   \includegraphics[width=\textwidth]{archivo.png}
+% ------------------------------------------------------------------
+\newcommand{\figura}[3]{%
+  \begin{figure}[H]
+    \centering
+    \fbox{\parbox[c][2.6cm][c]{0.9\textwidth}{\centering\small\color{gray}%
+      \textit{[Insertar figura]}\\[2pt] #2}}
+    \caption{#3}
+    \label{#1}
+  \end{figure}}
+
+\newcommand{\analisis}[1]{\par\noindent\textbf{Análisis.} #1\par\medskip}
+
+% ------------------------------------------------------------------
+\begin{document}
+% ------------------------------------------------------------------
+
+\begin{titlepage}
+  \centering
+  {\large 16.63 -- Procesamiento de Señales e Imágenes Biomédicas\par}
+  \vspace{0.3cm}
+  {\large Segundo Cuatrimestre de 2026\par}
+  \vspace{2.5cm}
+  {\Large\bfseries Trabajo Práctico Integrador\par}
+  \vspace{0.5cm}
+  {\LARGE\bfseries Potencia espectral del EEG durante la escucha de canciones en idioma nativo y no nativo\par}
+  \vspace{2.5cm}
+  {\large Grupo 9\par}
+  \vspace{0.8cm}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Integrante} & \textbf{Legajo} \\
+    \midrule
+    DEL CARRIL, Francisco & 65229 \\
+    ESCOBAR, Victoria Nazarena & 65435 \\
+    UTHURRALT, Sofía & 65579 \\
+    \bottomrule
+  \end{tabular}
+  \vfill
+  {Fecha de entrega: \underline{\hspace{3cm}}\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ==================================================================
+\section*{Resumen}
+\addcontentsline{toc}{section}{Resumen}
+% ==================================================================
+Se analizó el EEG de 19 sujetos del \textit{Auditory Evoked Potential EEG-Biometric Dataset} (PhysioNet) registrado en cuatro electrodos (T7, F8, Cz y P4). En una primera parte se comparó la escucha de una canción en idioma nativo contra una en idioma no nativo. Las señales se filtraron (notch de 50~Hz y pasabanda de 0,1--40~Hz), se estimó la densidad espectral de potencia (PSD) con el método de Welch y se calcularon la potencia absoluta y relativa en las bandas $\delta$, $\theta$, $\alpha$, $\beta$ y $\gamma$ baja. Las condiciones se compararon con tests pareados (Wilcoxon y $t$), corrección por comparaciones múltiples (FDR, Holm y permutación max-T) y tamaño de efecto ($d_z$). No se encontraron diferencias significativas entre ambas condiciones. En una segunda parte, con el mismo pipeline, se comparó la escucha de música nativa contra el reposo con ojos cerrados. En ese caso la potencia $\alpha$ absoluta aumentó con música (significativo en Cz y T7 con todas las correcciones), aunque gran parte del aumento acompaña un incremento general de la potencia de la señal.
+
+% ==================================================================
+\section{Introducción y motivación}
+% ==================================================================
+Este proyecto busca describir las diferencias en el EEG de las personas mientras escuchan música en su idioma nativo, en comparación con cuando escuchan música en un idioma no nativo.
+
+La principal motivación es la musicoterapia, disciplina que utiliza la música y los sonidos para mejorar la salud física y mental, y que se aplica en el tratamiento de patologías como el Alzheimer o el autismo, entre otras.
+
+Para procesar música en el idioma nativo, el cerebro necesitaría un nivel de concentración menor, ya que conoce el idioma y la letra le resulta familiar; a la vez, se generaría una respuesta emocional alta, porque al entender la letra el sujeto se siente interpelado. En cambio, al escuchar música en un idioma no nativo se requeriría un nivel de concentración más alto: al no entender la letra, se la procesa como un instrumento más y se presta más atención a los instrumentos, la armonicidad y los ritmos, con una respuesta emocional más baja. En este trabajo se analiza cómo cambian las bandas del EEG en estos dos escenarios.
+
+% ==================================================================
+\section{Objetivos}
+% ==================================================================
+Se propone desarrollar un algoritmo de procesamiento de señales de EEG que permita comparar la actividad cerebral durante la escucha de canciones en el idioma nativo y en un idioma no nativo. A partir de los electrodos T7 (temporal izquierdo), F8 (frontal derecho), Cz (centro de la cabeza) y P4 (parietal derecho) del sistema 10-10, se busca identificar las diferencias entre ambas condiciones en la potencia de las bandas $\delta$, $\theta$, $\alpha$, $\beta$ y $\gamma$ baja, y en su distribución sobre las distintas regiones corticales.
+
+\textbf{Pregunta de investigación:} ¿qué diferencias presenta la actividad eléctrica cerebral durante la escucha de canciones en el idioma nativo y en un idioma no nativo, considerando su contenido frecuencial (ritmos cerebrales) y las variaciones espaciales según el electrodo analizado?
+
+\textbf{Objetivos específicos:}
+\begin{itemize}
+  \item Preprocesar las señales: control de calidad de canales y sujetos (incluyendo inconsistencias en las anotaciones) y atenuación de ruidos y artefactos mediante filtros.
+  \item Caracterizar las señales en el dominio frecuencial mediante la PSD y la potencia en las bandas $\delta$, $\theta$, $\alpha$, $\beta$ y $\gamma$ baja.
+  \item Comparar la potencia de las bandas entre condiciones, considerando los cuatro electrodos.
+  \item Evaluar estadísticamente las diferencias y cómo varían según la banda y el electrodo.
+  \item Explorar si la familiaridad con el idioma de la canción se relaciona con las diferencias observadas.
+\end{itemize}
+
+% ==================================================================
+\section{Dataset}
+% ==================================================================
+Se utilizó el \textit{Auditory Evoked Potential EEG-Biometric Dataset} (v1.0.0) de PhysioNet \cite{aboalzahab}, registrado en la Universidad Politécnica de las Marcas (UNIVPM, Ancona, Italia) con 20 voluntarios.
+
+\begin{itemize}
+  \item \textbf{Adquisición:} OpenBCI Ganglion Board, frecuencia de muestreo $f_s = 200$~Hz, electrodos de copa de oro con pasta conductiva Ten20, software OpenBCI GUI v5.0.3.
+  \item \textbf{Canales (sistema 10-10):} T7 (temporal izquierdo), F8 (frontal derecho), Cz (central) y P4 (parietal derecho). Electrodos de referencia y tierra en las orejas izquierda y derecha.
+  \item \textbf{Formato:} archivos \texttt{.csv} con una columna de índice de muestra y una columna por canal. Nombre \texttt{sXX\_exXX\_sXX}: sujeto, experimento y sesión (esta última solo en ex01 y ex02).
+  \item \textbf{Carpetas:} datos crudos (3~min), segmentados (los 2~min con menos ruido, sin filtrar) y filtrados por los autores (notch 50~Hz y Butterworth de 1.\textsuperscript{er} orden 1--40~Hz).
+  \item \textbf{Metadatos:} \texttt{Subjects.csv} (idioma materno, comentarios, hábitos) y \texttt{Songs.csv} (canciones utilizadas).
+\end{itemize}
+
+Experimentos utilizados: \textbf{ex05} (canción en idioma nativo con auriculares in-ear) y \textbf{ex06} (canción en idioma no nativo con auriculares in-ear). Según el dataset, a los sujetos italianos se les pasó una canción en árabe como no nativa, y a los no italianos una canción en italiano. En la segunda parte se usa además \textbf{ex02} (reposo con ojos cerrados, 3 sesiones por sujeto).
+
+Se trabajó con la carpeta \textit{Segmented Data}: conserva los 2 minutos con menor presencia de artefactos de movimiento y reduce el volumen de datos, pero sus registros no están filtrados ni libres de ruido.
+
+% ##################################################################
+\part{Canción en idioma nativo vs.\ no nativo}
+% ##################################################################
+
+% ==================================================================
+\section{Metodología}
+% ==================================================================
+
+\subsection{Pipeline general}
+El procesamiento sigue los pasos planteados en el anteproyecto:
+\begin{enumerate}
+  \item Exploración y descarga del dataset (\textit{Segmented Data}, ex05 y ex06).
+  \item Control de calidad de los registros y de los metadatos.
+  \item Preprocesamiento: filtro notch de 50~Hz y pasabanda 0,1--40~Hz.
+  \item Estimación de la PSD con el método de Welch sobre el registro completo.
+  \item Resumen: potencia absoluta y relativa por sujeto, condición, canal y banda.
+  \item Comparación entre condiciones y entre electrodos.
+  \item Análisis estadístico (tests pareados, corrección múltiple, tamaño de efecto).
+  \item Análisis exploratorio (familiaridad con el idioma) y limitaciones.
+\end{enumerate}
+En el anteproyecto se proponía segmentar cada registro en intervalos estacionarios antes de estimar la PSD. Siguiendo la devolución de la cátedra, ese paso se reemplazó por la aplicación directa del método de Welch sobre cada registro de 2 minutos.
+
+\subsection{Control de calidad}
+\label{sec:qc}
+\textbf{Integridad de archivos.} Cada archivo se verificó con una función que comprueba que no esté vacío, que existan las columnas de los canales, que no haya valores nulos (NaN) ni infinitos, y que tenga al menos 18\,000 muestras (90~s a 200~Hz).
+
+\textbf{Metadatos.} Se inspeccionó \texttt{Subjects.csv} buscando inconsistencias entre idioma materno, canciones y comentarios.
+
+\textbf{Inspección de canales.} Para cada canal se calculó el desvío estándar, la amplitud máxima y la proporción de muestras consecutivas idénticas. Un canal se marcó como sospechoso si su desvío superaba 5 veces la mediana de los desvíos de su registro (posible artefacto de gran amplitud) o si era menor a 0,1 veces esa mediana (canal plano).
+
+\subsection{Preprocesamiento y filtrado}
+Antes de filtrar se exploraron algunos registros elegidos al azar, en el dominio temporal (10~s iniciales) y en frecuencia (PSD preliminar con Welch), para identificar las fuentes de ruido.
+
+\figura{fig:exploracion}{Notebook 02 -- Figuras 1 y 2: serie temporal y PSD de dos registros crudos elegidos al azar.}{Exploración temporal y espectral de registros crudos.}
+\analisis{En todos los canales aparece un pico angosto en 50~Hz, debido al acoplamiento inductivo y capacitivo con la red eléctrica. En el dominio temporal se observa una deriva lenta y un nivel de continua distinto de cero, especialmente en F8 y Cz. El espectro muestra el decaimiento aperiódico típico del EEG, con un pico marcado en la banda $\alpha$ (cerca de 10~Hz), y en algunos canales otro más chico cerca de 20~Hz.}
+
+A partir de esta exploración se aplicaron dos filtros, en cascada y con fase cero:
+
+\textbf{Filtro notch de 50~Hz.} Es un filtro IIR de segundo orden que atenúa una banda muy angosta alrededor de una frecuencia $f_0$ y deja pasar el resto. Su ancho de banda queda definido por el factor de calidad $Q = f_0/\mathrm{BW}$; con $f_0 = 50$~Hz y $Q = 30$, el ancho de la banda rechazada es de $\approx 1{,}7$~Hz. Esta elección replica el procesamiento de los autores del dataset \cite{aboalzahab}.
+
+\textbf{Filtro pasabanda Butterworth 0,1--40~Hz.} El filtro Butterworth tiene respuesta en magnitud máximamente plana en la banda de paso (sin ondulaciones), a costa de una transición más gradual que otros diseños. Se usó orden 4, implementado en secciones de segundo orden (SOS) para mayor estabilidad numérica. El límite inferior de 0,1~Hz atenúa las derivas de muy baja frecuencia sin eliminar la banda $\delta$, que según Rajbdad et al.\ \cite{rajbdad} sirve como marcador para discriminar condiciones auditivas; por eso no se usó el filtro 1--40~Hz de los autores. El límite superior de 40~Hz se fundamenta en estudios de EEG en contextos musicales y lingüísticos, que usaron 0,1--30~Hz \cite{markovic} y 0,1--55~Hz \cite{wagner}; permite analizar $\delta$, $\theta$, $\alpha$, $\beta$ y la porción inferior de $\gamma$ (30--40~Hz).
+
+\textbf{Filtrado de fase cero.} Ambos filtros se aplicaron hacia adelante y hacia atrás (\texttt{filtfilt} y \texttt{sosfiltfilt}). Al filtrar dos veces en sentidos opuestos, los desfasajes se cancelan: la señal filtrada no se desplaza en el tiempo ni deforma su forma de onda, y la magnitud de la respuesta queda elevada al cuadrado (la atenuación en dB se duplica).
+
+\figura{fig:filtrado}{Notebook 02 -- Figuras 3 y 4: comparación crudo vs.\ filtrado (tiempo y PSD) para los mismos registros.}{Señal y PSD antes y después del filtrado.}
+\analisis{En el dominio temporal desaparece el nivel de continua (la señal filtrada queda centrada en 0) y se atenúa la deriva lenta. En frecuencia, las curvas cruda y filtrada coinciden en la banda de interés (0,1--40~Hz), lo que indica que el filtrado no deforma los ritmos que se analizan. El pico de 50~Hz se convierte en una muesca profunda, y por encima de 40~Hz la potencia cae varios órdenes de magnitud.}
+
+\subsection{Estimación de la PSD: método de Welch}
+La densidad espectral de potencia (PSD) indica cómo se distribuye la potencia de la señal en frecuencia (en $\mu$V$^2$/Hz). El estimador más simple, el periodograma ($|X(f)|^2$ de la señal completa), es muy ruidoso: su varianza no disminuye aunque el registro sea más largo. El método de Welch reduce esa varianza promediando:
+
+\begin{enumerate}
+  \item La señal $x[n]$ se divide en $K$ segmentos de $N$ muestras, con solapamiento entre segmentos consecutivos.
+  \item A cada segmento se le resta su media y se lo multiplica por una ventana $w[n]$ (Hann), que suaviza los bordes y reduce la fuga espectral (\textit{leakage}).
+  \item Se calcula el periodograma de cada segmento con la FFT:
+  \begin{equation}
+    P_k(f) = \frac{2}{f_s \sum_{n} w[n]^2}\left|\sum_{n=0}^{N-1} w[n]\,x_k[n]\,e^{-j2\pi f n/f_s}\right|^2
+  \end{equation}
+  El factor $1/(f_s\sum w^2)$ normaliza a unidades de densidad y el 2 suma las frecuencias negativas (espectro unilateral).
+  \item Se promedian los $K$ periodogramas: $\hat{S}(f) = \frac{1}{K}\sum_k P_k(f)$.
+\end{enumerate}
+
+Promediar $K$ segmentos reduce la varianza de la estimación aproximadamente en un factor $K$, pero cada segmento es más corto que la señal completa, lo que empeora la resolución en frecuencia $\Delta f = f_s/N$. Se usaron segmentos de $N = 4000$ muestras (20~s), con 50~\% de solapamiento y ventana de Hann. Esto da $\Delta f = 200/4000 = 0{,}05$~Hz y, para un registro de 120~s, $K = 11$ segmentos.
+
+La PSD se calculó primero con una implementación propia de Welch (notebook 03) y luego con \texttt{scipy.signal.welch} con escala de densidad (notebook 04). Ambas dan la misma forma espectral; la implementación propia no incluía el factor de normalización $1/(f_s\sum w^2)$, que no afecta la potencia relativa ni las diferencias en escala logarítmica, pero sí es necesario para expresar la potencia absoluta en $\mu$V$^2$. El registro \texttt{s05\_ex05} dura 200~s en lugar de 120~s; como la PSD es una densidad, esto solo implica que se promedian más segmentos.
+
+\figura{fig:psd_individual}{Notebook 03 -- Figuras 1 y 2: PSD de Welch de cada registro, ex05 y ex06 (19 registros por condición).}{PSD individual de cada sujeto por canal.}
+\analisis{Todas las PSD tienen la misma forma general: potencia decreciente con la frecuencia y un pico en la banda $\alpha$, más marcado en P4. Se ven la muesca del notch en 50~Hz y la caída del pasabanda por encima de 40~Hz. En F8 hay registros con potencia muy superior al resto en bajas frecuencias, lo que anticipa la presencia de artefactos en ese electrodo.}
+
+\subsection{Descriptores}
+\label{sec:descriptores}
+A partir de la PSD de cada sujeto, condición y canal se calcularon los siguientes descriptores. Se trabajó con un valor por sujeto (y no con la mediana entre sujetos) para poder hacer comparaciones pareadas y estimar la variabilidad entre personas.
+
+\begin{table}[H]
+\centering
+\caption{Bandas de frecuencia analizadas.}
+\label{tab:bandas}
+\begin{tabular}{lll}
+\toprule
+Banda & Rango & Asociaciones típicas \\
+\midrule
+$\delta$ & 0,5--4 Hz & Procesos lentos \\
+$\theta$ & 4--8 Hz & Memoria, emoción, carga cognitiva (frontal medial) \\
+$\alpha$ & 8--13 Hz & Inhibición, reposo; disminuye con la atención activa \\
+$\beta$ & 13--30 Hz & Procesamiento activo, motor \\
+$\gamma$ baja & 30--40 Hz & Integración semántica y perceptual \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Potencia absoluta.} Es el área bajo la PSD dentro de la banda, en $\mu$V$^2$:
+\begin{equation}
+  P_{abs}(b) = \sum_{f_k \in [f_1, f_2)} \hat{S}(f_k)\,\Delta f
+\end{equation}
+Se usaron intervalos semiabiertos para que ninguna frecuencia se cuente en dos bandas. Mide cuánta actividad oscilatoria hay en ese ritmo, pero depende de factores no cerebrales (impedancia del electrodo, grosor del cráneo), por lo que varía mucho entre sujetos. Por eso se compara dentro de cada sujeto y en escala logarítmica.
+
+\textbf{Potencia relativa.} Es la fracción de la potencia total (0,5--40~Hz) que cae en cada banda:
+\begin{equation}
+  P_{rel}(b) = \frac{P_{abs}(b)}{P_{total}}
+\end{equation}
+Normaliza las diferencias de amplitud entre sujetos y describe el ``reparto'' del espectro. Como las cinco bandas suman 1, si una aumenta alguna otra debe disminuir aunque no haya cambiado, por lo que se interpreta junto con la absoluta.
+
+\textbf{Diferencia pareada.} Para cada sujeto $i$, canal y banda:
+\begin{equation}
+  \Delta_i = \log_{10} P^{\text{nativo}}_{abs,i} - \log_{10} P^{\text{no nativo}}_{abs,i} = \log_{10}\frac{P^{\text{nativo}}_{abs,i}}{P^{\text{no nativo}}_{abs,i}}
+\end{equation}
+Al restar dentro del mismo sujeto se cancela todo lo que es propio de cada persona (amplitud, anatomía, electrodos). $\Delta > 0$ indica más potencia con la canción nativa; por ejemplo, $\Delta = 0{,}1$ equivale a un $26~\%$ más ($10^{0{,}1} = 1{,}26$). Para la potencia relativa, $\Delta_i$ se expresó en puntos porcentuales.
+
+\textbf{Tamaño de efecto ($d_z$ de Cohen).} Es la media de las diferencias dividida por su desvío estándar:
+\begin{equation}
+  d_z = \frac{\bar{\Delta}}{s_\Delta}
+\end{equation}
+Indica qué tan grande es el cambio medio en relación con la variabilidad entre sujetos (referencias habituales: 0,2 chico, 0,5 mediano, 0,8 grande). A diferencia del p-valor, no depende del tamaño de la muestra. Su intervalo de confianza del 95~\% se estimó por \textit{bootstrap}: se remuestrearon los sujetos con reposición 5000 veces, se recalculó $d_z$ en cada réplica y se tomaron los percentiles 2,5 y 97,5. Si el intervalo contiene al 0, no puede afirmarse el signo del efecto. Como complemento se reportó el porcentaje de sujetos con $\Delta > 0$.
+
+\subsection{Análisis estadístico}
+\label{sec:estadistica}
+
+\textbf{Hipótesis nula y p-valor.} Cada test parte de la hipótesis nula $H_0$: ambas canciones producen la misma potencia y las diferencias observadas se deben al azar. El p-valor es la probabilidad de observar diferencias al menos tan grandes como las medidas si $H_0$ fuera cierta. Se consideró significativo un resultado con $p < 0{,}05$.
+
+\textbf{Normalidad.} Para elegir el test adecuado se evaluó si los $\Delta$ de cada celda (canal $\times$ banda) siguen una distribución normal, con el test de Shapiro-Wilk ($H_0$: los datos provienen de una normal) y con gráficos Q-Q, que comparan los cuantiles observados con los de una normal teórica: si los puntos siguen una recta, los datos son aproximadamente normales.
+
+\textbf{Tests pareados.} Como cada sujeto escuchó ambas canciones, se testeó si la diferencia $\Delta$ es distinta de 0:
+\begin{itemize}
+  \item \textbf{$t$ pareado} (paramétrico): calcula $t = \bar\Delta / (s_\Delta/\sqrt{n})$ y lo compara con una distribución $t$ de Student con $n-1$ grados de libertad. Supone que los $\Delta$ son aproximadamente normales; con muestras chicas, un único valor extremo puede desplazar la media e inflar el desvío.
+  \item \textbf{Wilcoxon de rangos con signo} (no paramétrico): ordena los $|\Delta_i|$ de menor a mayor, les asigna un rango y suma los rangos de las diferencias positivas. Bajo $H_0$ los signos son simétricos y esa suma debería ser cercana a la mitad del total. No supone normalidad y es robusto a valores extremos, porque un valor atípico solo cuenta como el rango más alto. Se usó como test principal.
+\end{itemize}
+Ambos tests son bilaterales.
+
+\textbf{Corrección por comparaciones múltiples.} Se hicieron 20 tests por descriptor (4 canales $\times$ 5 bandas). Con un umbral de 0,05, se espera en promedio 1 falso positivo cada 20 tests aunque no exista ningún efecto, y la probabilidad de obtener al menos uno es $1 - 0{,}95^{20} \approx 64~\%$. Por eso los p-valores se corrigieron con tres métodos:
+\begin{itemize}
+  \item \textbf{Benjamini-Hochberg (FDR):} controla la proporción esperada de falsos positivos entre los resultados declarados significativos. Se ordenan los p-valores de menor a mayor y el de posición $k$ se compara con $\frac{k}{m}\cdot 0{,}05$, con $m = 20$. Se usó como corrección principal.
+  \item \textbf{Holm:} controla la probabilidad de cometer al menos un falso positivo en toda la familia de tests. Compara el p-valor más chico con $0{,}05/m$, el segundo con $0{,}05/(m-1)$, y así sucesivamente, deteniéndose en el primero que no supera su umbral. Es más estricta que FDR.
+  \item \textbf{Permutación con máximo estadístico (max-T):} si $H_0$ es cierta, las etiquetas ``nativo'' y ``no nativo'' son intercambiables y el signo de cada $\Delta_i$ es arbitrario. Se generaron 20\,000 réplicas invirtiendo al azar el signo de los $\Delta$ de cada sujeto; en cada una se calculó el estadístico $t$ de las 20 celdas y se guardó el máximo $|t|$. El p-valor corregido de una celda es la proporción de réplicas en las que ese máximo supera al $|t|$ observado. No supone normalidad y respeta la correlación entre canales y bandas; es la idea de los tests de permutación usados por Wagner et al.\ \cite{wagner}.
+\end{itemize}
+
+\textbf{Cambio específico vs.\ cambio global.} Si en una condición aumenta la potencia de toda la señal de un electrodo (por ejemplo, por un cambio en el contacto del electrodo), todas las bandas aumentan en potencia absoluta sin que cambie ningún ritmo en particular. Para distinguirlo se calculó también la diferencia de la potencia total (0,5--40~Hz) y se la comparó con la de cada banda.
+
+\textbf{Comparación entre electrodos (test de Friedman).} Es la versión no paramétrica del ANOVA de medidas repetidas: dentro de cada sujeto ordena los valores de los 4 electrodos del 1 al 4 y evalúa si algún electrodo queda sistemáticamente arriba o abajo ($H_0$: los electrodos son intercambiables). Se aplicó (a) a la potencia relativa de cada banda y condición, para evaluar la topografía, y (b) a los $\Delta$ de cada banda, para evaluar si el efecto de la canción depende del electrodo (interacción).
+
+\textbf{Robustez.} Para el único resultado con $p < 0{,}05$ sin corregir se repitió el test excluyendo a los sujetos con artefactos y, en un análisis \textit{leave-one-out}, excluyendo de a un sujeto por vez.
+
+\textbf{Análisis exploratorio.} Para evaluar la familiaridad con el idioma se usaron:
+\begin{itemize}
+  \item un \textbf{test exacto por permutación}: con solo 2 sujetos que entienden ambos idiomas, se calculó el $|\Delta|$ medio de los $\binom{19}{2} = 171$ pares posibles de sujetos y se tomó como p-valor la proporción de pares con un valor menor o igual al de esos dos sujetos;
+  \item el \textbf{test de Mann-Whitney U}, versión no paramétrica del $t$ para dos grupos independientes, que evalúa si los valores de un grupo tienden a ocupar los rangos más altos.
+\end{itemize}
+
+% ==================================================================
+\section{Resultados}
+% ==================================================================
+
+\subsection{Control de calidad}
+Los 40 archivos (20 sujetos $\times$ 2 condiciones) pasaron el control de integridad.
+
+En los metadatos, el sujeto S19 figura con italiano como lengua materna y, a la vez, con el comentario ``Fluent in Italian''. Como esto puede ser una redundancia o un error en la anotación del idioma materno, se excluyeron sus dos registros. Los sujetos S12 y S13 comparten gran parte de sus datos (género, hábitos y el mismo valor exacto de IMC); para descartar que fuera un archivo duplicado se calculó la correlación canal a canal entre sus señales, que resultó prácticamente nula ($|r| < 0{,}014$). Se concluyó que son adquisiciones independientes con un error en los metadatos, y se conservaron ambos.
+
+Quedaron 19 sujetos y 38 registros: 7 italianos, 8 árabes y 4 de otros idiomas (letón, inglés y urdu). Dos sujetos árabes (S11 y S17) declaran hablar italiano con fluidez, que es el idioma de su canción no nativa.
+
+En la inspección de canales, solo el canal F8 de \texttt{s01\_ex06} se marcó como sospechoso (desvío estándar muy alto).
+
+\figura{fig:sospechoso}{Notebook 01 -- Figura 1: canal F8 de \texttt{s01\_ex06} y canal T7 del mismo registro como referencia.}{Canal marcado como sospechoso en la inspección.}
+\analisis{F8 presenta varios picos de gran amplitud en la primera mitad del registro. En las mismas zonas, T7 muestra ensanchamientos de la señal, por lo que es probable que se trate de movimientos del sujeto al comienzo del registro; luego ambas señales se estabilizan. Se decidió conservar el registro y el canal.}
+
+\subsection{Perfil espectral}
+
+\figura{fig:psd_mediana}{Notebook 04 -- Figura 1: PSD de Welch, mediana y rango intercuartil entre sujetos, nativo vs.\ no nativo, por canal.}{PSD típica por canal en ambas condiciones.}
+\analisis{La forma es la esperada: potencia decreciente con la frecuencia y un pico en la banda $\alpha$, máximo en P4. Las curvas de ambas condiciones están prácticamente superpuestas en los cuatro canales y sus rangos intercuartiles se solapan en todas las frecuencias, por lo que no se observan diferencias evidentes entre canciones.}
+
+\begin{table}[H]
+\centering
+\caption{Potencia relativa (\%), mediana entre sujetos.}
+\label{tab:prel1}
+\begin{tabular}{llccccc}
+\toprule
+Canal & Condición & $\delta$ & $\theta$ & $\alpha$ & $\beta$ & $\gamma$ \\
+\midrule
+\multirow{2}{*}{T7} & nativo & 29,4 & 9,8 & 32,8 & 20,4 & 4,1 \\
+ & no nativo & 28,9 & 10,7 & 35,9 & 20,8 & 3,6 \\
+\multirow{2}{*}{F8} & nativo & 40,3 & 8,7 & 21,9 & 15,7 & 3,5 \\
+ & no nativo & 37,8 & 9,4 & 25,6 & 15,9 & 3,0 \\
+\multirow{2}{*}{Cz} & nativo & 27,9 & 11,7 & 38,9 & 16,4 & 2,6 \\
+ & no nativo & 30,3 & 12,5 & 39,0 & 15,9 & 2,6 \\
+\multirow{2}{*}{P4} & nativo & 18,3 & 8,0 & 56,7 & 15,6 & 2,5 \\
+ & no nativo & 20,0 & 7,7 & 53,9 & 15,0 & 2,7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La $\alpha$ domina en P4 (alrededor del 55~\%) y disminuye hacia adelante, mientras que la $\delta$ es máxima en F8 (alrededor del 40~\%). En F8 se detectaron valores fuera de rango: en los sujetos s01, s02, s05 y s16 la $\delta$ relativa de F8 supera el 75~\%, y en s01 la potencia $\delta$ de F8 es del orden de 100 veces la del resto de los canales. Esto es consistente con artefactos oculares en un electrodo cercano al ojo. Las diferencias en escala logarítmica son robustas a este problema porque comparan a cada sujeto consigo mismo, pero la potencia relativa de F8 en esos sujetos queda dominada por el artefacto.
+
+\subsection{Tamaño de efecto}
+
+\figura{fig:dz1}{Notebook 04 -- Figura 2: mapa de calor del $d_z$ por canal y banda (potencia absoluta y relativa). El asterisco marca los IC 95~\% que excluyen el 0.}{Tamaño de efecto nativo -- no nativo.}
+\analisis{Casi todos los $d_z$ están entre $-0{,}3$ y $+0{,}4$ (efectos chicos), con intervalos de confianza que incluyen el 0. La única celda cuyo intervalo excluye el 0 es $\alpha$ en T7 en potencia absoluta ($d_z = 0{,}53$, IC 95~\% $[0{,}15;\ 0{,}95]$), que indica más $\alpha$ en el temporal izquierdo con la canción nativa (alrededor de $+12~\%$, 13 de 19 sujetos). En potencia relativa ese efecto prácticamente desaparece ($d_z = 0{,}13$).}
+
+\figura{fig:sujetos1}{Notebook 04 -- Figura 3: $\Delta\log_{10}P_{abs}$ de cada sujeto por banda y canal, coloreado por grupo de idioma.}{Consistencia del efecto entre sujetos.}
+\analisis{En todas las bandas y canales los puntos se reparten a ambos lados del 0 y las medias quedan cerca de cero. No hay un patrón consistente en el que la mayoría de los sujetos aumente o disminuya su potencia con la canción nativa. La dispersión es mayor en $\delta$, la banda más afectada por artefactos.}
+
+\subsection{Tests estadísticos}
+
+\textbf{Normalidad.} Se rechazó la normalidad en 8 de 20 celdas en potencia absoluta y en 11 de 20 en potencia relativa.
+
+\figura{fig:qq}{Notebook 05 -- Figura 1: gráficos Q-Q de $\Delta\log_{10}P_{abs}$ para las 20 celdas (en rojo, Shapiro-Wilk $p < 0{,}05$).}{Gráficos Q-Q de las diferencias.}
+\analisis{Las celdas no normales se concentran en $\delta$ y en F8, donde uno o dos sujetos quedan muy alejados de la recta: son los sujetos con artefactos oculares. Esto justifica usar el test de Wilcoxon como principal, ya que no se ve arrastrado por esos valores extremos.}
+
+\textbf{Tests pareados y corrección.} De los 40 tests, solo $\alpha$ en T7 (potencia absoluta) dio $p < 0{,}05$ sin corregir. Después de la corrección, ninguna celda resultó significativa.
+
+\begin{table}[H]
+\centering
+\caption{Celdas con menor p-valor (nativo -- no nativo). abs: $\Delta\log_{10}P_{abs}$; rel: $\Delta P_{rel}$ en puntos porcentuales.}
+\label{tab:tests1}
+\begin{tabular}{lllcccccc}
+\toprule
+Desc. & Canal & Banda & $d_z$ & $p_{\text{Wilcoxon}}$ & $p_t$ & $p_{\text{FDR}}$ & $p_{\text{Holm}}$ & $p_{\text{max-T}}$ \\
+\midrule
+abs & T7 & $\alpha$ & 0,53 & 0,040 & 0,032 & 0,73 & 0,80 & 0,27 \\
+abs & F8 & $\alpha$ & 0,34 & 0,145 & 0,156 & 0,73 & 1,00 & 0,85 \\
+abs & F8 & $\gamma$ & 0,18 & 0,169 & 0,443 & 0,73 & 1,00 & 1,00 \\
+abs & F8 & $\beta$ & 0,27 & 0,169 & 0,261 & 0,73 & 1,00 & 0,98 \\
+abs & T7 & $\beta$ & 0,37 & 0,182 & 0,129 & 0,73 & 1,00 & 0,78 \\
+rel & Cz & $\delta$ & $-0{,}28$ & 0,196 & 0,245 & 0,99 & 1,00 & 0,97 \\
+rel & P4 & $\beta$ & 0,27 & 0,312 & 0,259 & 0,99 & 1,00 & 0,97 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Para $\alpha$ en T7, el p-valor de 0,04 está dentro de lo esperable por azar con 20 tests: el p corregido por FDR es 0,73, y max-T indica que en el 27~\% de las réplicas aleatorias aparece en alguna celda un efecto al menos igual de grande.
+
+\figura{fig:forest1}{Notebook 05 -- Figura 2: gráfico de bosque con $d_z$ e IC 95~\% para cada canal y banda (en rojo, $p < 0{,}05$ sin corregir).}{Tamaño de efecto e incertidumbre por celda.}
+\analisis{Casi todas las barras cruzan el 0 y son anchas (aproximadamente de $-0{,}5$ a $+0{,}7$): con 19 sujetos la estimación es imprecisa y los datos son compatibles tanto con la ausencia de efecto como con efectos moderados en cualquier dirección. En potencia absoluta la mayoría de los puntos queda levemente a la derecha (algo más de potencia con la canción nativa), mientras que en relativa se reparten a ambos lados.}
+
+\textbf{Cambio específico vs.\ global.} La potencia total no cambió significativamente en ningún canal (Tabla~\ref{tab:total1}). En T7 la potencia total aumentó en promedio lo mismo que la $\alpha$ (alrededor de $+12~\%$), pero con mayor variabilidad entre sujetos. Es decir, la $\alpha$ en T7 no aumenta más que el resto de la señal: el resultado nominal se parece más a un cambio general de amplitud en ese electrodo que a un efecto específico del idioma sobre el ritmo $\alpha$, lo que coincide con que la $\alpha$ relativa en T7 casi no cambie.
+
+\begin{table}[H]
+\centering
+\caption{Diferencia de la potencia total (0,5--40~Hz), nativo -- no nativo. Como referencia, $\alpha$ en T7: $\bar\Delta = 0{,}049$ ($\approx +12~\%$), $s_\Delta = 0{,}092$.}
+\label{tab:total1}
+\begin{tabular}{lccccc}
+\toprule
+Canal & $\bar\Delta\log_{10}$ & $s_\Delta$ & $d_z$ & $p_{\text{Wilcoxon}}$ & Cambio (\%) \\
+\midrule
+T7 & 0,050 & 0,220 & 0,23 & 0,31 & +12,2 \\
+F8 & 0,053 & 0,249 & 0,21 & 0,49 & +13,0 \\
+Cz & $-0{,}004$ & 0,112 & $-0{,}03$ & 0,95 & $-0{,}8$ \\
+P4 & $-0{,}005$ & 0,105 & $-0{,}05$ & 0,65 & $-1{,}2$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Comparación entre electrodos}
+\textbf{(a) Topografía.} Los electrodos difieren significativamente entre sí en todas las bandas y en ambas condiciones (Friedman $p < 0{,}001$ en $\delta$, $\theta$ y $\alpha$; $p \le 0{,}016$ en $\beta$ y $\gamma$; todos significativos tras FDR).
+
+\textbf{(b) Interacción.} Ningún test de Friedman sobre los $\Delta$ resultó significativo. En potencia absoluta todos dieron $p > 0{,}2$; en relativa los más bajos fueron $\alpha$ ($p = 0{,}067$) y $\theta$ ($p = 0{,}086$), con $p_{\text{FDR}} \approx 0{,}2$.
+
+\figura{fig:box1}{Notebook 05 -- Figura 3: diagramas de caja de la potencia relativa por electrodo y condición, para cada banda.}{Potencia relativa por electrodo y condición.}
+\analisis{Cada caja resume a los 19 sujetos (mediana, cuartiles y valores atípicos). Las diferencias entre electrodos son claras y coinciden con la topografía conocida: $\alpha$ máxima en P4, $\delta$ máxima en F8 y $\theta$ máxima en Cz. Dentro de cada electrodo, las cajas de ambas condiciones casi se superponen: las diferencias entre electrodos son mucho mayores que las diferencias entre canciones.}
+
+\subsection{Robustez del resultado en $\alpha$ -- T7}
+Al excluir a los sujetos con artefactos (s01, s02, s05 y s16), el efecto se reduce ($d_z = 0{,}45$, $n = 15$) y deja de ser significativo ($p = 0{,}151$).
+
+\figura{fig:loo}{Notebook 05 -- Figura 4: p-valor de Wilcoxon para $\alpha$ en T7 al excluir de a un sujeto (en naranja, $p > 0{,}05$).}{Análisis \textit{leave-one-out}.}
+\analisis{Al excluir a un único sujeto, el p-valor supera 0,05 en 8 de los 19 casos. El resultado está en el límite de la significancia y depende de qué sujetos formen la muestra, por lo que es frágil.}
+
+\subsection{Análisis exploratorio: familiaridad con el idioma}
+Estos análisis buscan generar hipótesis, no confirmarlas: los grupos son muy chicos y se hacen varias preguntas, por lo que sus resultados deben tomarse como sugerencias.
+
+\textbf{Familiaridad directa.} Si la diferencia entre canciones se debiera a comprender la letra, los dos sujetos que entienden ambas canciones (S11 y S17, fluidos en italiano) deberían mostrar una diferencia menor. Para cada sujeto se calculó el $|\Delta|$ medio sobre las 20 celdas, que mide cuánto cambió su EEG entre canciones sin importar la dirección.
+
+\figura{fig:fluidos}{Notebook 05 -- Figura 5: $|\Delta|$ medio de cada sujeto ordenado de menor a mayor (izq.) y distribución del $|\Delta|$ medio de los 171 pares posibles de sujetos (der.).}{Cambio entre canciones y familiaridad con el idioma.}
+\analisis{S17 y S11 ocupan los puestos 1.\textsuperscript{o} y 4.\textsuperscript{o} entre los sujetos que menos cambian (|$\Delta$| medio de 0,035 frente a 0,107 del resto). Solo 3 de los 171 pares posibles cambian tan poco o menos ($p = 0{,}018$). El resultado va en la dirección que predice la hipótesis de comprensión, pero se basa en 2 sujetos, un $|\Delta|$ chico también puede reflejar registros más estables (S08 y S12, que no entienden árabe, cambian casi igual de poco), y es una de varias preguntas exploratorias. Además, en $\alpha$ T7 ambos sujetos no se comportan igual: S17 está cerca de 0 ($\Delta = -0{,}009$) y S11 tiene uno de los valores más altos ($\Delta = +0{,}110$, percentil 84).}
+
+\textbf{Familiaridad asimétrica entre grupos.} El dataset se registró en Italia, por lo que se supuso (sin que figure en los metadatos) que los sujetos no italianos tienen cierta exposición al italiano, su canción no nativa, mientras que los italianos probablemente no conocen el árabe. Si la familiaridad importa, la diferencia entre canciones debería ser más marcada en los italianos. Se comparó a los 7 italianos con los 12 restantes mediante Mann-Whitney.
+
+\figura{fig:italianos}{Notebook 05 -- Figura 6: $\Delta\log_{10}P_{abs}$ de $\alpha$ en P4 por grupo (italianos vs.\ resto).}{$\alpha$ en P4: italianos vs.\ resto.}
+\analisis{$\alpha$ en P4 fue la celda con mayor diferencia entre grupos: los 7 italianos tienen $\Delta > 0$ (más $\alpha$ con la canción nativa), aunque en 4 de ellos es casi 0, mientras que en el resto el $\Delta$ medio es negativo ($0{,}074$ vs.\ $-0{,}049$; $p = 0{,}005$). Tras la corrección FDR sobre las 20 celdas no es significativo ($p_{\text{FDR}} = 0{,}10$). El patrón es compatible con que el contraste con un idioma desconocido produzca un cambio en $\alpha$ parietal, pero también puede deberse a las canciones: los italianos siempre escucharon la misma canción árabe y el resto, la misma canción italiana.}
+
+\subsection{Relación con la bibliografía}
+Obleser y Weisz \cite{obleser} y Becker et al.\ \cite{becker} encontraron que, cuanto más inteligible es el habla, mayor es la supresión (disminución) de la potencia $\alpha$; en Becker et al.\ el efecto se ubicó sobre la corteza temporal izquierda. Zioga et al.\ \cite{zioga} mostraron que la potencia $\alpha$ en regiones temporales izquierdas sigue la estructura lingüística del habla comprendida. Grant et al.\ \cite{grant} encontraron más $\alpha$ al escuchar en un segundo idioma, lo que interpretan como una mayor demanda de atención. Wagner et al.\ \cite{wagner} encontraron diferencias en $\alpha$ y $\beta$ entre patrones fonológicos nativos y no nativos.
+
+Según esta bibliografía, el sitio más probable para un efecto era T7 (temporal izquierdo), donde apareció el único resultado nominal, pero en la dirección opuesta: tanto la supresión de $\alpha$ por comprensión como el aumento de $\alpha$ por esfuerzo en un segundo idioma predicen menos $\alpha$ con la canción nativa, y aquí se observó más. Posibles razones: esos estudios miden cambios relacionados a eventos (en el segundo posterior a cada palabra), mientras que aquí se midió la potencia promedio de 2 minutos; usan estímulos de habla y no canciones; y el efecto observado no sobrevive a la corrección y se comporta como un cambio general de amplitud en T7. En cambio, el resultado exploratorio de familiaridad sí es coherente con la idea general de esta bibliografía: lo relevante sería comprender el lenguaje.
+
+\subsection{Limitaciones}
+\begin{table}[H]
+\centering
+\caption{Limitaciones del estudio.}
+\label{tab:lim1}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.4cm}X>{\raggedright\arraybackslash}p{3.4cm}}
+\toprule
+Limitación & Por qué afecta & Gravedad \\
+\midrule
+Pocos sujetos ($n = 19$) & Solo se detectan efectos grandes ($d_z \ge 0{,}7$--$1{,}0$); los subgrupos tienen aún menos potencia estadística & Alta: principal razón de no encontrar efectos \\
+Orden fijo (nativa siempre antes) & Fatiga, somnolencia, adaptación o cambios en el contacto de los electrodos se confunden con la condición & Alta \\
+Canciones distintas & Tempo, volumen, voz e instrumentación difieren; para el grupo ``otro'' la canción nativa es distinta en cada sujeto & Media \\
+Solo 4 electrodos & No permite estudiar la distribución espacial en detalle; un artefacto en un electrodo pesa mucho & Media \\
+Artefactos oculares y musculares & $\delta$ muy alta en F8 en varios sujetos; no se aplicó ICA ni rechazo de segmentos & Media: los $\Delta$ en log son robustos, pero la potencia relativa de F8 queda contaminada \\
+Sin línea de base & No se comparó contra el reposo, por lo que no se distingue ``la música cambia el EEG'' de ``una canción lo cambia más que otra'' & Media \\
+Familiaridad poco medida & Solo hay un comentario libre (``Fluent in Italian'') en 3 sujetos, uno de ellos excluido & Alta para el análisis exploratorio \\
+Potencia promedio de 2 min & No capta respuestas rápidas ligadas a cada palabra, donde la bibliografía encuentra efectos & Media \\
+Múltiples comparaciones exploratorias & En el análisis exploratorio algún $p < 0{,}05$ es esperable por azar & Media \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Conclusiones de la Parte I}
+\begin{enumerate}
+  \item No se encontraron diferencias estadísticamente significativas en la potencia absoluta ni relativa entre la escucha de canciones en idioma nativo y no nativo, en ningún electrodo ni banda, después de corregir por comparaciones múltiples (FDR, Holm y max-T).
+  \item El único efecto nominal ($\alpha$ absoluta en T7, $d_z = 0{,}53$, $p = 0{,}04$ sin corregir) no sobrevive a la corrección, es frágil y se explica en buena parte por un cambio general de amplitud en T7.
+  \item Los electrodos difieren mucho entre sí, con la topografía esperada, pero no hay evidencia de que el efecto de la canción dependa del electrodo.
+  \item Con $n = 19$ solo podían detectarse efectos grandes; los resultados son compatibles con efectos chicos o moderados que esta muestra no puede detectar.
+  \item En el análisis exploratorio, los dos sujetos que entienden ambas canciones están entre los que menos cambian, y los italianos muestran una tendencia a más $\alpha$ parietal con la canción nativa. Ninguno de estos resultados es concluyente.
+\end{enumerate}
+
+% ##################################################################
+\part{Música nativa vs.\ reposo con ojos cerrados}
+% ##################################################################
+
+% ==================================================================
+\section{Nueva hipótesis y cambios en el pipeline}
+% ==================================================================
+Dado que no se encontraron diferencias entre canciones, y que una de las limitaciones era la falta de una línea de base, se planteó una nueva comparación: la escucha de la canción en idioma nativo contra el reposo con ojos cerrados. La hipótesis es que escuchar música modifica la potencia espectral del EEG respecto del reposo.
+
+Se aplicó el mismo pipeline de la Parte~I (secciones~\ref{sec:qc} a~\ref{sec:estadistica}), con los siguientes cambios:
+\begin{itemize}
+  \item \textbf{Datos:} reposo con ojos cerrados (ex02, 3 sesiones por sujeto, 60 archivos) y canción nativa (ex05, 20 archivos), ambos de \textit{Segmented Data}, sin filtrar. Se mantuvo la exclusión de S19, con 19 sujetos.
+  \item \textbf{Filtrado:} se aplicó la misma función de filtrado de la Parte~I; se verificó que reproduce los datos filtrados anteriores con una diferencia del orden de $10^{-9}$~$\mu$V.
+  \item \textbf{Sesiones de reposo:} se calculó la PSD de cada sesión y se promediaron las 3 PSD de cada sujeto, para tener un único valor de reposo representativo por sujeto y mantener el emparejamiento uno a uno con la condición de música.
+  \item \textbf{Diferencia:} $\Delta = \log_{10}P^{\text{música}} - \log_{10}P^{\text{reposo}}$; $\Delta > 0$ indica más potencia escuchando música.
+  \item \textbf{Análisis exploratorio:} la pregunta de familiaridad ya no aplica, porque la música es siempre la nativa. Las 3 sesiones de reposo permitieron evaluar la variabilidad natural entre registros, la sensibilidad a la sesión elegida y la estabilidad en el tiempo.
+\end{itemize}
+
+% ==================================================================
+\section{Resultados}
+% ==================================================================
+
+\subsection{Control de calidad y perfil espectral}
+Los 80 archivos pasaron el control de calidad y los 19 sujetos tienen sus 3 sesiones de reposo válidas. Como en la Parte~I, \texttt{s05\_ex05} dura 200~s.
+
+\figura{fig:psd2}{Notebook 06 -- Figura 1: PSD de Welch, mediana y rango intercuartil entre sujetos, reposo vs.\ música, por canal.}{PSD típica por canal: reposo vs.\ música.}
+\analisis{Las curvas de reposo y música casi se superponen. La diferencia más visible es un pico de $\alpha$ (cerca de 10~Hz) algo más alto con música, sobre todo en Cz y P4.}
+
+\begin{table}[H]
+\centering
+\caption{Potencia relativa (\%) y absoluta ($\mu$V$^2$), mediana entre sujetos.}
+\label{tab:p2}
+\small
+\begin{tabular}{llccccc|ccccc}
+\toprule
+ & & \multicolumn{5}{c|}{Relativa (\%)} & \multicolumn{5}{c}{Absoluta ($\mu$V$^2$)} \\
+Canal & Cond. & $\delta$ & $\theta$ & $\alpha$ & $\beta$ & $\gamma$ & $\delta$ & $\theta$ & $\alpha$ & $\beta$ & $\gamma$ \\
+\midrule
+\multirow{2}{*}{T7} & música & 29,4 & 9,8 & 32,8 & 20,4 & 4,1 & 6,15 & 3,03 & 12,22 & 5,63 & 1,25 \\
+ & reposo & 32,8 & 11,3 & 29,5 & 19,9 & 4,2 & 7,39 & 3,02 & 9,44 & 4,50 & 0,93 \\
+\multirow{2}{*}{F8} & música & 40,3 & 8,7 & 21,9 & 15,7 & 3,5 & 13,72 & 3,24 & 10,12 & 5,47 & 1,35 \\
+ & reposo & 43,2 & 8,1 & 24,8 & 13,0 & 2,9 & 14,13 & 3,03 & 8,04 & 4,48 & 0,89 \\
+\multirow{2}{*}{Cz} & música & 27,9 & 11,7 & 38,9 & 16,4 & 2,6 & 9,00 & 4,39 & 13,84 & 5,92 & 0,91 \\
+ & reposo & 34,0 & 13,0 & 32,6 & 15,8 & 2,4 & 10,16 & 4,24 & 8,95 & 4,60 & 0,77 \\
+\multirow{2}{*}{P4} & música & 18,3 & 8,0 & 56,7 & 15,6 & 2,5 & 7,10 & 2,88 & 22,37 & 6,65 & 0,95 \\
+ & reposo & 25,7 & 8,9 & 49,3 & 13,4 & 1,9 & 8,22 & 3,38 & 17,65 & 4,80 & 0,78 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Con música, la $\alpha$ relativa aumenta levemente en T7, Cz y P4 (en P4, de 49~\% a 57~\%) y la $\delta$ disminuye. En potencia absoluta, casi todas las bandas aumentan con música, no solo la $\alpha$.
+
+\subsection{Tamaño de efecto y tests estadísticos}
+
+\figura{fig:dz2}{Notebook 06 -- Figura 2: mapa de calor del $d_z$ (música -- reposo) por canal y banda, potencia absoluta y relativa.}{Tamaño de efecto música -- reposo.}
+\analisis{Los efectos más grandes están en la $\alpha$ absoluta de Cz ($d_z = 1{,}07$) y T7 ($0{,}92$). En potencia absoluta casi todas las celdas son positivas, en línea con el aumento general de potencia. En relativa los efectos son chicos, salvo $\alpha$ en Cz ($+0{,}73$) y $\delta$ en Cz ($-0{,}76$).}
+
+Se rechazó la normalidad en 15 de 20 celdas en potencia absoluta y en 11 de 20 en relativa, por lo que se mantuvo Wilcoxon como test principal. En potencia absoluta, 7 de 20 celdas resultaron significativas tras FDR; en relativa, 1 de 20 (Tabla~\ref{tab:tests2}).
+
+\begin{table}[H]
+\centering
+\caption{Celdas significativas tras FDR (música -- reposo).}
+\label{tab:tests2}
+\begin{tabular}{lllccccc}
+\toprule
+Desc. & Canal & Banda & $d_z$ & \% suj. $\Delta>0$ & $p_{\text{FDR}}$ & $p_{\text{Holm}}$ & $p_{\text{max-T}}$ \\
+\midrule
+abs & Cz & $\alpha$ & 1,07 & 79 & 0,006 & 0,007 & $<0{,}001$ \\
+abs & T7 & $\alpha$ & 0,92 & 84 & 0,006 & 0,012 & 0,002 \\
+abs & P4 & $\beta$ & 0,63 & 89 & 0,009 & 0,025 & 0,069 \\
+abs & F8 & $\alpha$ & 0,47 & 84 & 0,009 & 0,029 & 0,360 \\
+abs & T7 & $\beta$ & 0,63 & 84 & 0,021 & 0,085 & 0,073 \\
+abs & Cz & $\gamma$ & 0,53 & 74 & 0,024 & 0,107 & 0,214 \\
+abs & P4 & $\alpha$ & 0,50 & 68 & 0,035 & 0,173 & 0,282 \\
+rel & Cz & $\delta$ & $-0{,}76$ & 16 & 0,034 & 0,034 & 0,018 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+En potencia absoluta, solo $\alpha$ en Cz y en T7 siguen siendo significativas con las tres correcciones. En relativa, la disminución de $\delta$ en Cz también lo es.
+
+\textbf{Cambio específico vs.\ global.} Con música aumenta la potencia total de la señal, sobre todo en T7 y F8 (Tabla~\ref{tab:espec2}). Al restar ese aumento, la $\alpha$ de T7, F8 y P4 no crece más que el resto de la señal. Solo en Cz la $\alpha$ aumenta por encima de la potencia total ($\approx +20~\%$, $p = 0{,}011$), pero el resultado queda en el límite tras la corrección ($p_{\text{FDR}} = 0{,}054$).
+
+\begin{table}[H]
+\centering
+\caption{$\alpha$: diferencia de la banda frente a la diferencia de la potencia total (en $\log_{10}$).}
+\label{tab:espec2}
+\begin{tabular}{lccccc}
+\toprule
+Canal & $\Delta$ banda & $\Delta$ total & $\Delta$ banda $-$ $\Delta$ total & $p$ & $p_{\text{FDR}}$ \\
+\midrule
+T7 & 0,112 & 0,119 & $-0{,}007$ & 0,465 & 0,811 \\
+F8 & 0,155 & 0,127 & 0,028 & 0,312 & 0,738 \\
+Cz & 0,133 & 0,052 & 0,081 & 0,011 & 0,054 \\
+P4 & 0,103 & 0,034 & 0,069 & 0,332 & 0,738 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Comparación entre electrodos}
+Como en la Parte~I, los electrodos difieren significativamente entre sí en ambas condiciones (Friedman $p \le 0{,}016$ en todas las bandas). El efecto de la música no depende del electrodo: ningún test de interacción resultó significativo tras FDR.
+
+\figura{fig:box2}{Notebook 06 -- Figura 3: diagramas de caja de la potencia relativa por electrodo y condición (reposo vs.\ música).}{Potencia relativa por electrodo y condición.}
+\analisis{Se mantiene la topografía de la Parte~I, con $\alpha$ máxima en P4. Las cajas de música quedan algo por encima en $\alpha$ en Cz y P4 y algo por debajo en $\delta$, pero dentro de cada electrodo ambas condiciones se superponen en gran medida.}
+
+\subsection{Análisis exploratorio}
+
+\textbf{Variabilidad entre sesiones de reposo.} Las 3 sesiones de reposo corresponden a la misma condición, por lo que sus diferencias reflejan la variabilidad natural del EEG. Se comparó, sujeto a sujeto, el $|\Delta|$ música -- reposo con el $|\Delta|$ medio entre pares de sesiones de reposo (Wilcoxon unilateral).
+
+\figura{fig:piso}{Notebook 06 -- Figura 4: $|\Delta\log_{10}P_{abs}|$ entre sesiones de reposo (gris) y entre música y reposo (azul), mediana entre sujetos, por canal y banda.}{Efecto de la música frente a la variabilidad entre sesiones de reposo.}
+\analisis{En la mayoría de las celdas, el cambio con música es del mismo orden que la diferencia entre dos reposos de la misma persona. Solo $\beta$ en Cz lo supera significativamente ($p_{\text{FDR}} = 0{,}014$). La $\alpha$ en Cz es el doble de esa variabilidad, pero no alcanza significancia ($p_{\text{FDR}} = 0{,}11$).}
+
+\textbf{Sensibilidad a la sesión de reposo.} Se repitió el cálculo de $d_z$ usando como reposo solo la sesión 1, solo la 2, solo la 3 y el promedio.
+
+\figura{fig:sens}{Notebook 06 -- Figura 5: $d_z$ (potencia absoluta) para cada celda según la sesión de reposo usada como referencia.}{Sensibilidad del tamaño de efecto a la sesión de reposo.}
+\analisis{La $\alpha$ en Cz da prácticamente el mismo resultado con cualquier sesión ($d_z$ entre 0,95 y 1,07), por lo que es estable. En otras celdas, como $\alpha$ en F8 y P4, el $d_z$ cambia bastante según la sesión; la cantidad de celdas con $p < 0{,}05$ varía entre 7 y 14. Esto justifica usar el promedio de las 3 sesiones.}
+
+\textbf{Estabilidad en el tiempo.} Las 3 sesiones de reposo se registraron una detrás de otra al comienzo del experimento y la música más tarde. Si el EEG cambiara solo con el paso del tiempo (relajación, somnolencia), parte del efecto de la música podría deberse a eso. Se aplicó un test de Friedman sobre las 3 sesiones.
+
+\figura{fig:tiempo}{Notebook 06 -- Figura 6: $\log_{10}P_{abs}$ medio entre sujetos en las 3 sesiones de reposo (en orden) y en la música, por banda y canal.}{Evolución de la potencia a lo largo del registro.}
+\analisis{Entre las 3 sesiones de reposo no hay cambios significativos (todos con $p_{\text{FDR}} > 0{,}7$): en $\alpha$, por ejemplo, las tres sesiones no muestran una tendencia clara. El salto aparece recién con la música y en varias bandas a la vez, lo que es coherente con el aumento general de potencia. El EEG en reposo es estable, por lo que el paso del tiempo entre sesiones no explica el cambio.}
+
+\subsection{Limitaciones}
+\begin{table}[H]
+\centering
+\caption{Limitaciones de la Parte II.}
+\label{tab:lim2}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.6cm}X>{\raggedright\arraybackslash}p{3.4cm}}
+\toprule
+Limitación & Por qué afecta & Gravedad \\
+\midrule
+Aumento global de potencia con música & Toda la señal aumenta con música (sobre todo en T7), lo que puede deberse al orden, a los auriculares o al contacto de los electrodos & Media: explica la $\alpha$ absoluta en T7, F8 y P4 \\
+Orden fijo & Reposo al principio y música después & Media \\
+Potencia relativa cerrada & Como las bandas suman 1, una caída de $\delta$ hace subir las demás & Media: se interpreta junto con la absoluta \\
+Auriculares solo en la música & El estímulo auditivo y el dispositivo cambian a la vez & Media \\
+Pocos sujetos y 4 electrodos & Limita la detección de efectos chicos y el detalle espacial & Media \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Conclusiones de la Parte II}
+\begin{enumerate}
+  \item Hay un cambio en $\alpha$, pero es chico: con música la $\alpha$ absoluta aumenta entre un 25~\% y un 40~\% en los cuatro electrodos, con significancia en Cz y T7 para todas las correcciones.
+  \item Gran parte de ese aumento corresponde a toda la señal y no solo a la $\alpha$. Al descontar la potencia total, la $\alpha$ aumenta de forma propia solo en Cz ($\approx +20~\%$), con significancia en el límite ($p_{\text{FDR}} \approx 0{,}05$).
+  \item El paso del tiempo no explica el cambio, ya que el reposo es estable entre sesiones.
+\end{enumerate}
+
+% ==================================================================
+\section{Conclusiones generales}
+% ==================================================================
+Con el pipeline desarrollado (filtrado notch y pasabanda, PSD de Welch, potencia absoluta y relativa por banda, tests pareados no paramétricos con corrección múltiple y tamaño de efecto), no se encontraron diferencias en la potencia espectral del EEG entre la escucha de canciones en idioma nativo y no nativo. Al comparar la escucha de música nativa con el reposo con ojos cerrados, sí se observó un aumento de la potencia $\alpha$ absoluta, aunque en gran parte acompaña un aumento general de la potencia de la señal; el único aumento propio de $\alpha$ se encontró en Cz y fue marginal. Las principales limitaciones del diseño son el número de sujetos, el orden fijo de las condiciones, el uso de canciones distintas y la medición de potencia promedio en lugar de respuestas relacionadas a eventos.
+
+% ==================================================================
+\begin{thebibliography}{9}
+% ==================================================================
+\bibitem{aboalzahab} Abo Alzahab, N., Di Iorio, A., Apollonio, L., Alshalak, M., Gravina, A., Antognoli, L., Baldi, M., Scalise, L., \& Alchalabi, B. (2021). \textit{Auditory evoked potential EEG-Biometric dataset} (Version 1.0.0). PhysioNet. \url{https://doi.org/10.13026/ps31-fc50}
+
+\bibitem{becker} Becker, R., Pefkou, M., Michel, C. M., \& Hervais-Adelman, A. G. (2013). Left temporal alpha-band activity reflects single word intelligibility. \textit{Frontiers in Systems Neuroscience, 7}, 121. \url{https://doi.org/10.3389/fnsys.2013.00121}
+
+\bibitem{grant} Grant, A. M., Kousaie, S., Coulter, K., Gilbert, A. C., Baum, S. R., Gracco, V., Titone, D., Klein, D., \& Phillips, N. A. (2022). Age of acquisition modulates alpha power during bilingual speech comprehension in noise. \textit{Frontiers in Psychology, 13}, 865857. \url{https://doi.org/10.3389/fpsyg.2022.865857}
+
+\bibitem{markovic} Markovic, A., Kühnis, J., \& Jäncke, L. (2017). Task context influences brain activation during music listening. \textit{Frontiers in Human Neuroscience, 11}, 342. \url{https://doi.org/10.3389/fnhum.2017.00342}
+
+\bibitem{obleser} Obleser, J., \& Weisz, N. (2012). Suppressed alpha oscillations predict intelligibility of speech and its acoustic details. \textit{Cerebral Cortex, 22}(11), 2466--2477.
+
+\bibitem{rajbdad} Rajbdad, F., Aslam, M., Azmat, S., Dad, F., \& Xu, J. (2026). Classification of native and non-native songs, neutral music, and resting state of human brain from EEG-based auditory evoked potential using explainable features. \textit{Neurocomputing, 686}, 133708. \url{https://doi.org/10.1016/j.neucom.2026.133708}
+
+\bibitem{wagner} Wagner, M., Rusiniak, M., Higby, E., \& Nourski, K. V. (2023). Sensory processing of native and non-native phonotactic patterns in the alpha and beta frequency bands. \textit{Neuropsychologia, 189}, 108659. \url{https://doi.org/10.1016/j.neuropsychologia.2023.108659}
+
+\bibitem{zioga} Zioga, I., Weissbart, H., Lewis, A. G., Haegens, S., \& Martin, A. E. (2023). Naturalistic spoken language comprehension is supported by alpha and beta oscillations. \textit{Journal of Neuroscience, 43}(20), 3718--3732.
+
+\end{thebibliography}
+
+\end{document}
