@@ -1,3 +1,31 @@
+
+"""
+==========================================================================
+ANÁLISIS ESPECTRAL Y CÁLCULO DE POTENCIA POR BANDAS
+==========================================================================
+Procesa señales EEG para obtener su densidad espectral de potencia (PSD)
+mediante una implementación manual del método de Welch y calcular la
+potencia absoluta y relativa en distintas bandas de frecuencia.
+
+Incluye funciones para:
+- Integrar señales mediante la regla trapezoidal, adaptándose a distintas
+  versiones de NumPy.
+- Calcular la PSD de una señal utilizando el método de Welch, con ventanas
+  Hann y segmentos solapados.
+- Aplicar el cálculo espectral individualmente a los canales de un
+  DataFrame de EEG.
+- Calcular la potencia absoluta y relativa de cada banda de frecuencia
+  mediante la integración de la PSD.
+- Obtener la potencia relativa respecto de un rango total de frecuencias
+  definido como referencia.
+
+El procesamiento permite caracterizar la distribución de potencia de las
+señales EEG en diferentes bandas de frecuencia, facilitando su posterior
+análisis y comparación entre registros o condiciones experimentales.
+==========================================================================
+"""
+
+
 import numpy as np
 import scipy.signal
 
@@ -6,38 +34,61 @@ def integrar(y, x):
     if hasattr(np, "trapezoid"):
         return np.trapezoid(y, x)
     return np.trapz(y, x)
+
+
 def welch_per(x, fs, nperseg, nfft, noverlap):
     """
-    Implementa el cálculo del espectro de densidad de potencia (PSD) usando el método de Welch
-    con segmentos solapados (overlapping).
-
-    Parámetros:
-    x: señal
-    fs: frecuencia de muestreo en Hz
-    nperseg: cantidad de muestras por segmento (largo de ventana)
-    nfft: número de puntos de la FFT
-    noverlap: cantidad de muestras que se superponen
-
-    window: utiliza hanning
+    Calcula la densidad espectral de potencia (PSD) mediante
+    el método de Welch con ventana Hann y segmentos solapados.
     """
-    step = int(nperseg - noverlap)
-    win = scipy.signal.windows.hann(nperseg)
+    x = np.asarray(x, dtype=float)
 
-    psd = np.zeros(nfft)
+    if nperseg <= 0 or nfft < nperseg:
+        raise ValueError("nfft debe ser mayor o igual a nperseg.")
+
+    if noverlap < 0 or noverlap >= nperseg:
+        raise ValueError("noverlap debe ser menor que nperseg.")
+
+    if len(x) < nperseg:
+        raise ValueError("La señal es más corta que nperseg.")
+
+    step = nperseg - noverlap
+
+    win = scipy.signal.windows.hann(nperseg, sym=False)
+
+    escala = fs * np.sum(win**2)
+
+    psd = np.zeros(nfft // 2 + 1)
     count = 0
 
     for start in range(0, len(x) - nperseg + 1, step):
+
         segment = x[start:start + nperseg]
+
+        # Eliminación de la media de cada segmento
+        segment = segment - np.mean(segment)
+
         windowed = segment * win
-        fft_segment = np.fft.fft(windowed, n=nfft)
-        psd += np.abs(fft_segment)**2 / nfft
+
+        fft_segment = np.fft.rfft(windowed, n=nfft)
+
+        psd_segment = np.abs(fft_segment)**2 / escala
+
+        # Conversión a espectro unilateral
+        if nfft % 2 == 0:
+            psd_segment[1:-1] *= 2
+        else:
+            psd_segment[1:] *= 2
+
+        psd += psd_segment
         count += 1
 
     psd /= count
-    psd = psd[:nfft // 2] * 2
-    freq = np.linspace(0, fs / 2, nfft // 2)
+
+    freq = np.fft.rfftfreq(nfft, d=1/fs)
 
     return freq, psd
+
 
 def welch_eeg(df, fs, nperseg=4000, nfft=None, noverlap=None, canales=None):
     """
@@ -74,6 +125,7 @@ def welch_eeg(df, fs, nperseg=4000, nfft=None, noverlap=None, canales=None):
             freq = f
 
     return freq, psd_dict
+
 def potencia_por_banda(freq, psd, bandas, f_total=(0.5, 40)):
     """
     Integra la PSD dentro de cada banda de frecuencia (regla trapezoidal)
@@ -88,13 +140,24 @@ def potencia_por_banda(freq, psd, bandas, f_total=(0.5, 40)):
 
     Retorna:
     dict {f"{nombre_banda}_abs": potencia_absoluta, f"{nombre_banda}_rel": potencia_relativa}
+
+    Lanza:
+    ValueError si alguna banda se sale del rango f_total.
     """
+    # Chequeo: todas las bandas deben estar dentro de f_total
+    for nombre, (f_min, f_max) in bandas.items():
+        if f_min < f_total[0] or f_max > f_total[1]:
+            raise ValueError(
+                f"La banda '{nombre}' ({f_min}-{f_max} Hz) se sale de f_total {f_total}."
+            )
+
     mascara_total = (freq >= f_total[0]) & (freq <= f_total[1])
     potencia_total = integrar(psd[mascara_total], freq[mascara_total])
 
     resultado = {}
     for nombre, (f_min, f_max) in bandas.items():
-        mascara = (freq >= f_min) & (freq <= f_max)
+        mascara = (freq >= f_min) & (freq < f_max)   # < en vez de <=
         pot_abs = integrar(psd[mascara], freq[mascara])
+        resultado[f"{nombre}_abs"] = pot_abs
         resultado[f"{nombre}_rel"] = pot_abs / potencia_total
     return resultado

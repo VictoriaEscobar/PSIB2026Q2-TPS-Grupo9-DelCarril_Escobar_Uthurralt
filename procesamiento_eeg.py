@@ -1,13 +1,19 @@
 """
-Procesamiento de EEG para el TPI de PSIB (Grupo 9).
- 
-Dataset: Auditory evoked potential EEG-Biometric dataset v1.0.0 (PhysioNet).
-Se usan los registros de Segmented_Data de los experimentos 5 (canción en
-idioma nativo) y 6 (canción en idioma no nativo), auriculares comunes.
- 
-Flujo: cargar datos (ejecutar descargar_datos.py) -> (completar)
-"""
+==========================================================================
+ANÁLISIS DE CALIDAD Y FILTRADO
+==========================================================================
+Trabaja con los registros de los experimentos descargados del dataset
+Auditory evoked potential EEG-Biometric (PhysioNet v1.0.0).
 
+Incluye funciones para:
+- Cargar registros EEG desde archivos CSV.
+- Verificar la calidad e integridad de los registros.
+- Auditar el dataset y generar reportes de calidad.
+- Detectar canales sospechosos mediante métricas estadísticas.
+- Visualizar señales en el dominio temporal y su densidad espectral de potencia (PSD).
+- Comparar registros crudos y filtrados.
+- Aplicar filtros Notch de 50 Hz y pasabandas Butterworth de 0.1 a 40 Hz.
+"""
 # ========================  IMPORTS  ===========================
 from pathlib import Path
 import numpy as np
@@ -32,7 +38,7 @@ def cargar_registro(ruta_archivo: str) -> pd.DataFrame:
 
     - La primera columna del CSV es el índice de muestra: pasa a ser el índice
       del DataFrame y NO se cuenta como canal.
-    - Quedan solo los canales (T7, F8, Cz, P4).
+    - Se conservan las columnas de canales presentes en el archivo.
     - Todo se convierte a número, lo que no se pueda convertir queda como NaN.
 
     """
@@ -47,14 +53,19 @@ def cargar_registro(ruta_archivo: str) -> pd.DataFrame:
 
 def verificar_calidad_csv(ruta_archivo: str, min_muestras: int):
     """
-    Verifica la integridad de un DataFrame de EEG individual.
-    - Retorna (True, None) si el archivo es válido (lugares no vacíos, con valores válidos).
-    - Retorna (False, "motivo") si el archivo es inválido.
+    Verifica la calidad e integridad de un registro EEG individual.
 
-    Se le debe pasar:
-    - Ruta del archivo del dataset a evaluar (ruta_archivo).
-    - Cantidad mínima de filas (muestras) que debe tener la señal para ser considerada válida.
-    Para 2 minutos de registro a 200 Hz, se recomienda min_muestras = 18000 (1 min 30 segundos de señal.)
+    Comprueba que el archivo no esté vacío, que contenga canales de EEG,
+    que no haya valores nulos o infinitos y que tenga la cantidad mínima
+    de muestras requerida.
+
+    Parámetros:
+        ruta_archivo: Ruta del archivo CSV a evaluar.
+        min_muestras: Cantidad mínima de muestras requeridas.
+
+    Devuelve:
+        Una tupla (valido, motivo), indicando si el registro es válido
+        y, en caso contrario, el motivo del rechazo.
     """
     try:
         df = cargar_registro(ruta_archivo) # Lectura del archivo.
@@ -63,7 +74,7 @@ def verificar_calidad_csv(ruta_archivo: str, min_muestras: int):
         if df.empty:
             return False, "El archivo está vacío"
 
-        canales = df.columns[1:]
+        canales = df.columns
 
         # Prueba 2: verifica que se hacen las columnas de registro de canales.
         if len(canales)==0:
@@ -121,15 +132,15 @@ def auditar_dataset_segmentado(ruta_Segmented_Data):
     for archivo in archivos_interes:
         ruta_completa = os.path.join(ruta_Segmented_Data, archivo)
             
-        # Validación leyendo el CSV y revisando los canales desde df.columns[1:]
-        valido, motivo = verificar_calidad_csv(ruta_completa, 18000)
+        # Validación de calidad del registro utilizando todos los canales disponibles.
+        valido, motivo = verificar_calidad_csv(ruta_completa, min_muestras)
 
         # Extraer metadatos
         partes = archivo.replace('.csv', '').split('_')
         sujeto = partes[0]
         condicion = 'Nativo' if '_ex05' in archivo else 'No_Nativo'
 
-        # Guardamos SIN acentos en las llaves para evitar KeyErrors
+        # Guardamos
         reporte.append({
             'archivo': archivo,
             'sujeto': sujeto,
@@ -158,8 +169,16 @@ def auditar_dataset_segmentado(ruta_Segmented_Data):
 
 def screening_canales(ruta_Segmented_Data, archivos, factor_bajo=0.1, factor_alto=5.0):
     """
-    Calcula métricas estadísticas por canal y marca canales sospechosos comparando
-    contra la mediana de los canales del mismo registro.
+    Calcula métricas estadísticas por canal para identificar señales
+    potencialmente defectuosas o sospechosas.
+
+    Evalúa el desvío estándar, la proporción de diferencias consecutivas
+    iguales a cero y la amplitud máxima de cada canal. Compara los
+    resultados con la mediana de los canales del mismo registro.
+
+    Devuelve:
+        Un DataFrame con las métricas calculadas y la identificación
+        de los canales sospechosos.
     """
     filas = []
     for archivo in archivos:
@@ -192,33 +211,35 @@ def screening_canales(ruta_Segmented_Data, archivos, factor_bajo=0.1, factor_alt
     return pd.DataFrame(filas)
 
 
-# =================== FILTRADO ========================
 
-"""
-Exploración de registros EEG: serie temporal + PSD de Welch por canal.
-
-Cuatro funciones:
-    cargar_registro      -> lee un CSV y devuelve un DataFrame (solo canales)
-    calcular_psd         -> Welch 
-    comparar_senales     -> grafica N versiones ya cargadas
-    explorar_registros   -> elige archivos al azar, los carga y llama a comparar_senales
-
-Uso típico
-----------
-# 1) Solo crudos
-explorar_registros({"crudo": ruta_datos}, archivos, n_muestras=2, seed=0)
-
-# 2) Crudo vs filtrado (mismos nombres de archivo en ambas carpetas)
-explorar_registros(
-    {"crudo": ruta_datos, "filtrado": ruta_filtrados},
-    archivos, n_muestras=2, seed=0,
-)
-
-# 3) Filtrado en memoria, sin guardar nada
-df_crudo = cargar_registro(os.path.join(ruta_datos, archivo))
-df_filt = df_crudo.apply(lambda x: sosfiltfilt(sos, x))   # tu filtro
-comparar_senales({"crudo": df_crudo, "filtrado": df_filt}, titulo=archivo)
-"""
+# ============================================================
+# EXPLORACIÓN Y VISUALIZACIÓN DE REGISTROS EEG
+# ============================================================
+#
+# Permite visualizar las señales EEG en el dominio temporal
+# y su densidad espectral de potencia (PSD) mediante Welch.
+#
+# Uso:
+#
+# 1) Visualización de registros crudos:
+# explorar_registros(
+#     {"crudo": ruta_datos},
+#     archivos, n_muestras=2, seed=0, fs=fs
+# )
+#
+# 2) Comparación de registros crudos y filtrados:
+# explorar_registros(
+#     {"crudo": ruta_datos, "filtrado": ruta_filtrados},
+#     archivos, n_muestras=2, seed=0, fs=fs
+# )
+#
+# 3) Comparación de señales filtradas en memoria:
+# df_crudo = cargar_registro(os.path.join(ruta_datos, archivo))
+# df_filt = aplicar_filtros_eeg(df_crudo, fs)
+# comparar_senales(
+#     {"crudo": df_crudo, "filtrado": df_filt},
+#     fs=fs, titulo=archivo
+# )
 
 COLORES = ["steelblue", "darkorange", "seagreen", "crimson"]
 
@@ -361,11 +382,30 @@ def explorar_registros(
 
     return sel
 
+# ============================================================
+# FILTRADO
+# ============================================================
 
 def aplicar_filtros_eeg(df_eeg, fs, fc_baja=0.1, fc_alta=40.0, f_notch=50.0, q_notch=30.0, order=4):
     """
-    Aplica filtro Notch (50 Hz) y Pasabandas Butterworth (0.1 - 40 Hz).
-    Garantiza fase cero mediante filtfilt.
+    Aplica un filtrado Notch y un filtro pasabandas Butterworth a los
+    canales EEG disponibles.
+
+    Elimina la interferencia de 50 Hz mediante el filtro Notch y
+    limita el contenido frecuencial al rango de 0.1 a 40 Hz mediante
+    el filtro pasabandas. Ambos filtros se aplican en fase cero.
+
+    Parámetros:
+        df_eeg: DataFrame con los registros EEG.
+        fs: Frecuencia de muestreo en Hz.
+        fc_baja: Frecuencia de corte inferior del pasabandas.
+        fc_alta: Frecuencia de corte superior del pasabandas.
+        f_notch: Frecuencia central del filtro Notch.
+        q_notch: Factor de calidad del filtro Notch.
+        order: Orden del filtro Butterworth.
+
+    Devuelve:
+        Un DataFrame con las señales filtradas.
     """
     df_filtrado = df_eeg.copy()
     
